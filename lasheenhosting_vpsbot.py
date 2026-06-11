@@ -20,6 +20,24 @@ import psutil
 import platform
 import shutil
 from typing import Optional, Literal
+
+class MemberConverter(commands.MemberConverter):
+    """Custom MemberConverter that resolves by ID, mention, username, or display name"""
+    async def convert(self, ctx, argument):
+        try:
+            return await super().convert(ctx, argument)
+        except commands.BadArgument:
+            # Fallback: search by username or display name (case-insensitive)
+            if ctx.guild:
+                argument_lower = argument.lower()
+                member = discord.utils.find(
+                    lambda m: m.name.lower() == argument_lower or m.display_name.lower() == argument_lower,
+                    ctx.guild.members
+                )
+                if member:
+                    return member
+            raise commands.BadArgument(f'Member "{argument}" not found. Use @mention, user ID, or exact username.')
+
 import sqlite3
 import pickle
 import base64
@@ -525,32 +543,6 @@ def has_admin_role(ctx):
     
     return any(role.id == ADMIN_ROLE_ID for role in roles)
 
-async def resolve_member(ctx, value: str):
-    """Resolve a discord.Member from a mention, user ID, or username string"""
-    value = value.strip()
-    guild = ctx.guild
-    if not guild:
-        return None
-    # Mention: <@123456> or <@!123456>
-    if value.startswith('<@') and value.endswith('>'):
-        uid = value[2:-1].lstrip('!')
-        if uid.isdigit():
-            try:
-                return guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
-            except Exception:
-                return None
-    # Raw numeric ID
-    if value.isdigit():
-        try:
-            return guild.get_member(int(value)) or await guild.fetch_member(int(value))
-        except Exception:
-            return None
-    # Username or display name (case-insensitive)
-    return discord.utils.find(
-        lambda m: m.name.lower() == value.lower() or m.display_name.lower() == value.lower(),
-        guild.members
-    )
-
 async def capture_ssh_session_line(process):
     """Capture the SSH session line from tmate output"""
     try:
@@ -950,11 +942,11 @@ async def list_admins(ctx):
     memory="Memory in GB",
     cpu="CPU cores",
     disk="Disk space in GB",
-    owner="User who will own the VPS (ID, @mention, or username)",
+    owner="User who will own the VPS",
     os_image="OS image to use",
     use_custom_image="Use custom LasheenHosting image (recommended)"
 )
-async def create_vps_command(ctx, memory: int, cpu: int, disk: int, owner: str, 
+async def create_vps_command(ctx, memory: int, cpu: int, disk: int, owner: MemberConverter, 
                            os_image: str = DEFAULT_OS_IMAGE, use_custom_image: bool = True):
     """Create a new VPS with specified parameters (Admin only)"""
     if not has_admin_role(ctx):
@@ -967,11 +959,6 @@ async def create_vps_command(ctx, memory: int, cpu: int, disk: int, owner: str,
 
     if not ctx.guild:
         await ctx.send("❌ This command can only be used in a server!", ephemeral=True)
-        return
-
-    owner = await resolve_member(ctx, owner)
-    if not owner:
-        await ctx.send("❌ Could not find that user. Use their @mention, user ID, or exact username.", ephemeral=True)
         return
 
     if not bot.docker_client:
@@ -2624,16 +2611,11 @@ async def manage_vps(ctx, vps_id: str):
 @bot.hybrid_command(name='transfer_vps', description='Transfer a VPS to another user')
 @app_commands.describe(
     vps_id="ID of the VPS to transfer",
-    new_owner="User to transfer the VPS to (ID, @mention, or username)"
+    new_owner="User to transfer the VPS to"
 )
-async def transfer_vps_command(ctx, vps_id: str, new_owner: str):
+async def transfer_vps_command(ctx, vps_id: str, new_owner: MemberConverter):
     """Transfer a VPS to another user"""
     try:
-        new_owner = await resolve_member(ctx, new_owner)
-        if not new_owner:
-            await ctx.send("❌ Could not find that user. Use their @mention, user ID, or exact username.", ephemeral=True)
-            return
-
         token, vps = bot.db.get_vps_by_id(vps_id)
         if not vps or vps["created_by"] != str(ctx.author.id):
             await ctx.send("❌ VPS not found or you don't have permission to transfer it!", ephemeral=True)
