@@ -512,10 +512,13 @@ def has_admin_role(ctx):
     """Check if user has admin role or is in ADMIN_IDS"""
     if isinstance(ctx, discord.Interaction):
         user_id = ctx.user.id
-        roles = ctx.user.roles
+        # ctx.user can be a User (no roles) if not in a guild context;
+        # use ctx.guild.get_member() to get the Member object safely
+        member = ctx.guild.get_member(user_id) if ctx.guild else None
+        roles = member.roles if member else []
     else:
         user_id = ctx.author.id
-        roles = ctx.author.roles
+        roles = ctx.author.roles if hasattr(ctx.author, 'roles') else []
     
     if user_id in ADMIN_IDS:
         return True
